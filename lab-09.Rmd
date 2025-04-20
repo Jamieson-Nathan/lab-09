@@ -1,28 +1,252 @@
 ---
 title: "Lab 09: Algorithmic Bias"
-author: "Insert your name here"
-date: "Insert date here"
+author: "Jamieson Nathan"
+date: "04/20/2025"
 output: github_document
 ---
 
-## Load Packages and Data  
-
-First, let's load the necessary packages:  
-
 ```{r load-packages, message = FALSE}
 library(tidyverse)
-library(fairness)
+library(janitor)
 ```
 
-### The data
+```{r setup, message = FALSE}
 
-For this lab, we'll use the COMPAS dataset compiled by ProPublica. The data has been preprocessed and cleaned for you. You'll have to load it yourself. The dataset is available in the `data` folder, but I've changed the file name from `compas-scores-two-years.csv` to `compas-scores-2-years.csv`. I've done this help you practice debugging code when you encounter an error.
+compas <- read_csv("data/compas-scores-2-years.csv") %>%
+  clean_names() %>% 
+  rename(decile_score = decile_score_12,
+         priors_count = priors_count_15)
 
-```{r}
-compas <- read_csv("data/compas-scores-two-years.csv")
+glimpse(compas)
 ```
 
+### Exercise 1
 
-## Additional Exercises  
+``` {r first-one}
 
-Almost there! Keep building on your work and follow the same structure for any remaining exercises. Each exercise builds on the last, so take your time and make sure your code is working as expected.  
+nrow(compas)  
+ncol(compas)  
+
+n_distinct(compas$name)
+
+compas %>%
+  ggplot(aes(x = decile_score)) +
+  geom_histogram(binwidth = 1, color = "black") +
+  labs(title = "Distribution of COMPAS Decile Scores",
+       x = "COMPAS Risk Score (1-10)",
+       y = "Count")
+
+compas %>%
+  count(race) %>%
+  ggplot(aes(x = fct_reorder(race, n), y = n)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Distribution of Defendants by Race", x = "Race", y = "Count")
+
+compas %>%
+  count(sex) %>%
+  ggplot(aes(x = sex, y = n)) +
+  geom_col(fill = "salmon") +
+  labs(title = "Distribution of Defendants by Sex", x = "Sex", y = "Count")
+
+compas %>%
+  count(age_cat) %>%
+  ggplot(aes(x = age_cat, y = n)) +
+  geom_col(fill = "seagreen") +
+  labs(title = "Distribution of Defendants by Age Category", x = "Age Category", y = "Count")
+
+
+```
+
+Each row refers to the number of observations, each column represents the number of variables. The discrepancy between number of unique defendants and number of observations could be due to error or due to recidivism. Based on the histogram, it appears that high COMPAS risk scores occur much less frequently than lower scores.  
+
+## Exercise 2
+
+``` {r second-one}
+
+compas %>%
+  group_by(decile_score) %>%
+  summarize(
+    recid_rate = mean(two_year_recid, na.rm = TRUE),
+    count = n()
+  ) %>%
+  ggplot(aes(x = decile_score, y = recid_rate)) +
+  geom_col(fill = "darkorange") +
+  labs(
+    title = "Recidivism Rate by COMPAS Risk Score",
+    x = "COMPAS Decile Risk Score",
+    y = "Proportion Who Recidivated"
+  ) +
+  scale_y_continuous(labels = scales::percent_format())
+
+compas %>%
+  mutate(
+    prediction_correct = case_when(
+      decile_score >= 7 & two_year_recid == 1 ~ TRUE,
+      decile_score <= 4 & two_year_recid == 0 ~ TRUE,
+      TRUE ~ FALSE
+    )
+  ) %>%
+  summarize(
+    correct_predictions = sum(prediction_correct, na.rm = TRUE),
+    total = n(),
+    accuracy = correct_predictions / total
+  )
+
+
+```
+
+The plot shows a clear upward trend in recidivism rates as COMPAS risk scores increase, which supports some predictive validity. The higher the score, the higher the proportion of defendants who recidivate.
+
+The COMPAS algorithm correctly classified about 55.9% of the cases using the binary criteria (high score & recidivate OR low score & did not recidivate). This is better than chance, but still leaves ~44% of predictions incorrect, which is a significant margin for decisions that may affect sentencing or parole.
+
+### Exercise 3
+
+``` {r third-one}
+
+compas %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  ggplot(aes(x = decile_score, fill = race)) +
+  geom_histogram(position = "dodge", binwidth = 1, color = "black") +
+  labs(title = "Distribution of COMPAS Scores by Race",
+       x = "Decile Score",
+       y = "Count") +
+  scale_fill_manual(values = c("darkorange", "steelblue")) +
+  theme_minimal()
+
+compas %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  mutate(high_risk = decile_score >= 7) %>%
+  group_by(race) %>%
+  summarize(
+    total = n(),
+    high_risk_n = sum(high_risk, na.rm = TRUE),
+    high_risk_pct = mean(high_risk, na.rm = TRUE) * 100
+  )
+
+non_recidivists <- compas %>%
+  filter(two_year_recid == 0)
+
+non_recidivists %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  mutate(high_risk = decile_score >= 7) %>%
+  group_by(race) %>%
+  summarize(
+    total_non_recidivists = n(),
+    false_positives = sum(high_risk, na.rm = TRUE),
+    false_positive_rate = mean(high_risk, na.rm = TRUE) * 100
+  )
+
+recidivists <- compas %>%
+  filter(two_year_recid == 1)
+
+recidivists %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  mutate(low_risk = decile_score <= 4) %>%
+  group_by(race) %>%
+  summarize(
+    total_recidivists = n(),
+    false_negatives = sum(low_risk, na.rm = TRUE),
+    false_negative_rate = mean(low_risk, na.rm = TRUE) * 100
+  )
+
+
+```
+ Based on the visual, a significantly larger proportion of Black defendants were classified as high risk compared to White defendants. This suggests a racial disparity in how COMPAS scores are distributed and interpreted as “high risk.”
+ 
+Among those who did not recidivate, Black defendants were more than 2.5x as likely to be wrongly classified as high risk compared to White defendants. Among those who did recidivate, White defendants were more likely to be mistakenly classified as low risk — nearly 48% — compared to 28% of Black defendants.
+
+Therefore, black defendants are more likely to be labeled high risk even when they don’t reoffend (higher false positive rate), whereas, white defendants are more likely to be labeled low risk even when they do reoffend (higher false negative rate).
+
+
+``` {r fourth-one}
+
+metrics_by_race <- tibble(
+  race = c("African-American", "African-American", "Caucasian", "Caucasian"),
+  metric = c("False Positive Rate", "False Negative Rate", "False Positive Rate", "False Negative Rate"),
+  percent = c(24.9, 28.0, 9.1, 47.7)
+)
+
+metrics_by_race %>%
+  ggplot(aes(x = metric, y = percent, fill = race)) +
+  geom_col(position = "dodge") +
+  labs(title = "False Positive and Negative Rates by Race",
+       x = "Metric",
+       y = "Rate (%)") +
+  scale_fill_manual(values = c("orange", "steelblue")) +
+  theme_minimal()
+
+
+```
+
+This further affirms the previous findings, that the COMPAS rating is biased towards African-Americans. 
+
+### Exercise 4
+
+``` {r fifth-one}
+
+compas %>%
+  filter(race %in% c("African-American", "Caucasian"),
+         priors_count <= 10) %>%  # cap priors for readability
+  ggplot(aes(x = factor(priors_count), y = decile_score, fill = race)) +
+  geom_boxplot(outlier.shape = NA, position = position_dodge(width = 0.8)) +
+  labs(title = "Risk Score by Prior Convictions and Race",
+       x = "Number of Prior Convictions",
+       y = "COMPAS Risk Score") +
+  scale_fill_manual(values = c("orange", "steelblue")) +
+  theme_minimal()
+
+
+
+```
+
+There are higher scores for Black individuals at similar criminal histories, which suggests that priors are not being treated equally, and that race may be implicitly influencing risk assessment.
+
+### Exercise 
+
+``` {r sixth-one}
+
+compas %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  group_by(race, decile_score) %>%
+  summarize(
+    n = n(),
+    recidivism_rate = mean(two_year_recid, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+compas %>%
+  filter(race %in% c("African-American", "Caucasian")) %>%
+  group_by(race, decile_score) %>%
+  summarize(
+    n = n(),
+    recidivism_rate = mean(two_year_recid, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = decile_score, y = recidivism_rate, color = race)) +
+  geom_line(size = 1.2) +
+  geom_point() +
+  labs(
+    title = "Calibration Curve: Recidivism Rate by COMPAS Score and Race",
+    x = "COMPAS Decile Score",
+    y = "Observed Recidivism Rate"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_manual(values = c("orange", "steelblue")) +
+  theme_minimal()
+
+
+```
+
+While COMPAS may meet Northpointe’s definition of fairness (calibration), this analysis shows that it fails ProPublica’s.
+
+The algorithm is not equally wrong across racial groups: Black defendants are disproportionately flagged as high risk when they won’t reoffend, and White defendants are more likely to be mistakenly labeled as low risk when they do reoffend.
+
+This imbalance in error rates has serious implications for fairness, especially given the life-altering consequences of these predictions.
+
+### Exercise 5
+
+14. To create a fairer risk assessment algorithm, I would focus on reducing the unequal error rates we observed. This means ensuring that Black and White defendants have similar chances of being wrongly labeled high or low risk. I would review which variables the algorithm uses — like prior convictions — and reduce the influence of factors that reflect historical bias. Most importantly, I’d use a simpler, more transparent model so it’s clear how decisions are made and easier to hold the system accountable.
+
+15. Designing a “fair” algorithm involves trade-offs because different fairness definitions can conflict. For example, equalizing false positive and false negative rates (ProPublica’s approach) may make it harder to maintain calibration (Northpointe’s approach), where the same score reflects the same probability of recidivism across groups. Choosing one fairness criterion often comes at the cost of another, so any decision must weigh ethical, legal, and social values, not just statistical ones.
+
+16. Beyond technical fixes, policy changes are essential to ensure fair use of algorithmic tools. Risk assessments should be accompanied by clear guidelines limiting their influence on decisions like sentencing or parole, ensuring they inform rather than dictate outcomes. Regular audits for racial bias should be mandated, and defendants must have the right to challenge algorithmic decisions. Importantly, reforms must be embedded in a broader effort to address systemic inequalities in policing, prosecution, and incarceration.
